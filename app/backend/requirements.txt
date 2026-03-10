@@ -1,11 +1,10 @@
 fastapi==0.104.1
 uvicorn==0.24.0
 python-dotenv==1.0.0
-supabase==2.5.0
+supabase==2.4.6
 postgrest==0.15.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
-pydantic[email]==2.5.0
 passlib==1.7.4
 bcrypt==4.1.1
 PyJWT==2.11.0
@@ -17,4 +16,4 @@ razorpay==2.0.0
 PyPDF2==3.0.1
 requests==2.31.0
 slowapi==0.1.9
-httpx==0.25.2
+httpx==0.24.1
