@@ -200,7 +200,8 @@ app.add_exception_handler(RateLimitExceeded, cast(Any, _rate_limit_exceeded_hand
 # CORS configuration
 origins = [
     "http://localhost:3000",
-    "https://hire-ready-bgaha5k9k-priyanshu-kambojs-projects.vercel.app"
+    "https://hire-ready-bgaha5k9k-priyanshu-kambojs-projects.vercel.app",
+    "https://hire-ready-n7gsz0pob-priyanshu-kambojs-projects.vercel.app",
 ]
 
 app.add_middleware(
