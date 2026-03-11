@@ -7,12 +7,12 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone, timedelta
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from openai import AsyncOpenAI
 import razorpay
 import PyPDF2
 import io
@@ -23,6 +23,13 @@ import hashlib
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
 # MongoDB connection 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -31,14 +38,18 @@ db = client[os.environ['DB_NAME']]
 # Security
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
-JWT_SECRET = os.environ.get('JWT_SECRET')
+JWT_SECRET = get_required_env('JWT_SECRET')
 JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
 JWT_EXPIRATION = int(os.environ.get('JWT_EXPIRATION', 86400))
 
 # Razorpay client
-RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID')
-RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET')
-razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
+RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', '')
+razorpay_client: Any = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("EMERGENT_LLM_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # Create the main app without a prefix
 app = FastAPI()
@@ -184,11 +195,8 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
 
 async def analyze_resume_with_ai(resume_text: str) -> dict:
     try:
-        chat = LlmChat(
-            api_key=os.environ.get('EMERGENT_LLM_KEY'),
-            session_id=f"resume-analysis-{uuid.uuid4()}",
-            system_message="You are an expert ATS (Applicant Tracking System) resume analyzer. Provide detailed, actionable feedback."
-        ).with_model("openai", "gpt-4o")
+        if openai_client is None:
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured")
         
         prompt = f"""Analyze this resume and provide a comprehensive evaluation in JSON format:
 
@@ -210,11 +218,23 @@ Provide your response in this exact JSON structure:
   }}
 }}"""
         
-        message = UserMessage(text=prompt)
-        response = await chat.send_message(message)
+        response = await openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert ATS (Applicant Tracking System) resume analyzer. Provide detailed, actionable feedback."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2
+        )
+        content = response.choices[0].message.content if response.choices else None
+        if not content:
+            raise HTTPException(status_code=500, detail="Empty AI response")
         
         # Parse JSON from response
-        response_text = response.strip()
+        response_text = content.strip()
         if response_text.startswith("```json"):
             response_text = response_text[7:]
         if response_text.endswith("```"):
@@ -229,11 +249,8 @@ Provide your response in this exact JSON structure:
 
 async def match_jd_with_ai(resume_text: str, job_description: str) -> dict:
     try:
-        chat = LlmChat(
-            api_key=os.environ.get('EMERGENT_LLM_KEY'),
-            session_id=f"jd-match-{uuid.uuid4()}",
-            system_message="You are an expert at matching resumes with job descriptions."
-        ).with_model("openai", "gpt-4o")
+        if openai_client is None:
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured")
         
         prompt = f"""Compare this resume with the job description and provide a match analysis in JSON format:
 
@@ -251,11 +268,23 @@ Provide your response in this exact JSON structure:
   "strengths": [<list of 3-5 matching qualifications>]
 }}"""
         
-        message = UserMessage(text=prompt)
-        response = await chat.send_message(message)
+        response = await openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert at matching resumes with job descriptions."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2
+        )
+        content = response.choices[0].message.content if response.choices else None
+        if not content:
+            raise HTTPException(status_code=500, detail="Empty AI response")
         
         # Parse JSON from response
-        response_text = response.strip()
+        response_text = content.strip()
         if response_text.startswith("```json"):
             response_text = response_text[7:]
         if response_text.endswith("```"):
@@ -270,11 +299,8 @@ Provide your response in this exact JSON structure:
 
 async def generate_interview_questions_with_ai(resume_text: str) -> dict:
     try:
-        chat = LlmChat(
-            api_key=os.environ.get('EMERGENT_LLM_KEY'),
-            session_id=f"interview-gen-{uuid.uuid4()}",
-            system_message="You are an expert interviewer who creates targeted interview questions."
-        ).with_model("openai", "gpt-4o")
+        if openai_client is None:
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured")
         
         prompt = f"""Based on this resume, generate relevant interview questions in JSON format:
 
@@ -288,11 +314,23 @@ Provide your response in this exact JSON structure:
   "project_based": [<list of 5-7 questions about projects mentioned in resume>]
 }}"""
         
-        message = UserMessage(text=prompt)
-        response = await chat.send_message(message)
+        response = await openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert interviewer who creates targeted interview questions."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3
+        )
+        content = response.choices[0].message.content if response.choices else None
+        if not content:
+            raise HTTPException(status_code=500, detail="Empty AI response")
         
         # Parse JSON from response
-        response_text = response.strip()
+        response_text = content.strip()
         if response_text.startswith("```json"):
             response_text = response_text[7:]
         if response_text.endswith("```"):
@@ -389,7 +427,7 @@ async def analyze_resume(
         )
     
     # Validate PDF
-    if not file.filename.endswith('.pdf'):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
     # Extract text
@@ -416,15 +454,15 @@ async def analyze_resume(
     await db.resumes.insert_one(resume_doc)
     
     # Deduct 1 credit from user
-   await db.users.update_one(
-    {"id": current_user.id},
-    {
-        "$inc": {
-            "credits": -1,
-            "usage_count": 1
+    await db.users.update_one(
+        {"id": current_user.id},
+        {
+            "$inc": {
+                "credits": -1,
+                "usage_count": 1
+            }
         }
-    }
-)
+    )
 
     
     return ResumeAnalyzeResponse(
@@ -708,31 +746,6 @@ async def razorpay_webhook(request: Request):
     except Exception as e:
         logging.error(f"Webhook error: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
-                # Update payment status
-                await db.payment_transactions.update_one(
-                    {"session_id": session_id},
-                    {
-                        "$set": {
-                            "payment_status": "paid",
-                            "status": "complete",
-                            "event_id": webhook_response.event_id,
-                            "updated_at": datetime.now(timezone.utc).isoformat()
-                        }
-                    }
-                )
-                
-                # Grant credits to user
-                user_id = webhook_response.metadata.get("user_id")
-                if user_id:
-                    await db.users.update_one(
-                        {"id": user_id},
-                        {"$inc": {"credits": 1}}
-                    )
-        
-        return {"status": "success"}
-    except Exception as e:
-        logging.error(f"Webhook error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
 
 # ===== Admin Routes =====
 @api_router.get("/admin/stats", response_model=AdminStats)
@@ -757,10 +770,20 @@ async def get_admin_stats():
 # Include the router in the main app
 app.include_router(api_router)
 
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env.strip():
+    cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+else:
+    cors_origins = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://hire-ready-ai-lime.vercel.app"
+    ]
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
