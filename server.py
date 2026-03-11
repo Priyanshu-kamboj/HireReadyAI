@@ -767,9 +767,6 @@ async def get_admin_stats():
         total_revenue=total_revenue
     )
 
-# Include the router in the main app
-app.include_router(api_router)
-
 cors_origins_env = os.getenv("CORS_ORIGINS", "")
 if cors_origins_env.strip():
     cors_origins = [origin.strip().rstrip("/") for origin in cors_origins_env.split(",") if origin.strip()]
@@ -784,10 +781,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include the router in the main app after middleware setup
+app.include_router(api_router)
 
 # Configure logging
 logging.basicConfig(
