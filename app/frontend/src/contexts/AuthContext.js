@@ -3,8 +3,15 @@ import axios from 'axios';
 
 const AuthContext = createContext();
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || process.env.REACT_APP_BACKEND_URL;
+const configuredApiUrl = process.env.REACT_APP_API_URL || process.env.REACT_APP_BACKEND_URL;
+const fallbackApiUrl = 'https://hirereadyai-backend.onrender.com';
+const API_BASE_URL = (configuredApiUrl || fallbackApiUrl).replace(/\/$/, '');
 const API = `${API_BASE_URL}/api`;
+
+const apiClient = axios.create({
+  baseURL: API,
+  timeout: 20000
+});
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -29,7 +36,7 @@ export const AuthProvider = ({ children }) => {
 
   const fetchUser = async () => {
     try {
-      const response = await axios.get(`${API}/auth/me`, {
+      const response = await apiClient.get('/auth/me', {
         headers: { Authorization: `Bearer ${token}` }
       });
       setUser(response.data);
@@ -43,19 +50,28 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (name, email, password) => {
     // Perform registration but DO NOT log the user in automatically
-    const response = await axios.post(`${API}/auth/register`, { name, email, password });
+    const response = await apiClient.post('/auth/register', { name, email, password });
     const { user: newUser } = response.data;
     // Keep user logged out; require explicit login afterwards
     return newUser;
   };
 
   const login = async (email, password) => {
-    const response = await axios.post(`${API}/auth/login`, { email, password });
-    const { token: newToken, user: newUser } = response.data;
-    setToken(newToken);
-    setUser(newUser);
-    localStorage.setItem('token', newToken);
-    return newUser;
+    try {
+      const response = await apiClient.post('/auth/login', { email, password });
+      const { token: newToken, user: newUser } = response.data;
+      setToken(newToken);
+      setUser(newUser);
+      localStorage.setItem('token', newToken);
+      return newUser;
+    } catch (error) {
+      const message =
+        error?.response?.data?.detail ||
+        error?.message ||
+        'Login failed. Please try again.';
+      console.error('Login request failed:', { message, apiBaseUrl: API_BASE_URL, error });
+      throw new Error(message);
+    }
   };
 
   const logout = () => {
@@ -66,7 +82,7 @@ export const AuthProvider = ({ children }) => {
 
   const upgradeUser = async () => {
     try {
-      const response = await axios.post(`${API}/payment/upgrade`, {}, {
+      const response = await apiClient.post('/payment/upgrade', {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setUser({ ...user, plan_type: 'pro' });

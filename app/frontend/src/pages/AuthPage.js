@@ -36,11 +36,12 @@ export const AuthPage = ({ mode = 'login' }) => {
     } catch (error) {
       const msg = error.response?.data?.detail;
       const status = error.response?.status;
+      const fallbackMessage = error.message;
       if (isLogin && status === 404) {
         toast.error('No account found for this email. Please register first.');
         navigate('/register');
       } else {
-        toast.error(msg || 'Authentication failed');
+        toast.error(msg || fallbackMessage || 'Authentication failed');
       }
     } finally {
       setLoading(false);

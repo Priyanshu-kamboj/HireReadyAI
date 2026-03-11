@@ -772,7 +772,7 @@ app.include_router(api_router)
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "")
 if cors_origins_env.strip():
-    cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+    cors_origins = [origin.strip().rstrip("/") for origin in cors_origins_env.split(",") if origin.strip()]
 else:
     cors_origins = [
         "http://localhost:3000",
@@ -784,6 +784,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
