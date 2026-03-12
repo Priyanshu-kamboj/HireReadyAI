@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { DashboardLayout } from '../components/DashboardLayout';
@@ -15,14 +15,31 @@ export const InterviewPage = () => {
   const { token, fetchUser } = useAuth();
   const [resumes, setResumes] = useState([]);
   const [selectedResume, setSelectedResume] = useState('');
+  const [targetCompaniesInput, setTargetCompaniesInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [questions, setQuestions] = useState(null);
 
-  useEffect(() => {
-    fetchResumes();
-  }, []);
+  const parseCompanies = (rawValue) => {
+    const splitCompanies = rawValue
+      .split(/[\n,]/)
+      .map((company) => company.trim())
+      .filter(Boolean);
 
-  const fetchResumes = async () => {
+    const uniqueCompanies = [];
+    const seen = new Set();
+
+    splitCompanies.forEach((company) => {
+      const normalized = company.toLowerCase();
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        uniqueCompanies.push(company);
+      }
+    });
+
+    return uniqueCompanies.slice(0, 5);
+  };
+
+  const fetchResumes = useCallback(async () => {
     try {
       const response = await axios.get(`${API}/resume/history`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -31,7 +48,11 @@ export const InterviewPage = () => {
     } catch (error) {
       console.error('Failed to fetch resumes:', error);
     }
-  };
+  }, [token]);
+
+  useEffect(() => {
+    fetchResumes();
+  }, [fetchResumes]);
 
   const handleGenerate = async () => {
     if (!selectedResume) {
@@ -39,20 +60,30 @@ export const InterviewPage = () => {
       return;
     }
 
+    const targetCompanies = parseCompanies(targetCompaniesInput);
+
     setLoading(true);
     try {
       const response = await axios.post(
         `${API}/resume/interview-questions`,
-        { resume_id: selectedResume },
+        {
+          resume_id: selectedResume,
+          target_companies: targetCompanies
+        },
         {
           headers: { Authorization: `Bearer ${token}` }
         }
       );
       setQuestions(response.data);
-      toast.success(`Interview questions generated! ${response.data.remaining_credits} credits remaining`);
+      const withCompanySuffix = targetCompanies.length > 0 ? ` for ${targetCompanies.length} company target(s)` : '';
+      toast.success(`Interview questions generated${withCompanySuffix}! ${response.data.remaining_credits} credits remaining`);
       await fetchUser();
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Generation failed');
+      const message = error.response?.data?.detail || 'Generation failed';
+      toast.error(message);
+      if (message.toLowerCase().includes('full plan')) {
+        setTimeout(() => navigate('/pricing'), 1500);
+      }
     } finally {
       setLoading(false);
     }
@@ -67,6 +98,13 @@ export const InterviewPage = () => {
           </h1>
           <p className="text-gray-400">
             Generate personalized interview questions based on your resume
+          </p>
+        </div>
+
+        <div className="mb-6 p-4 bg-[#9E47FF]/10 border border-[#9E47FF]/30 rounded-lg">
+          <p className="text-sm text-gray-200">
+            Interview question generation is available on the Full plan. If generation fails with a plan message,
+            upgrade from Pricing and try again.
           </p>
         </div>
 
@@ -102,6 +140,24 @@ export const InterviewPage = () => {
                     ))}
                   </SelectContent>
                 </Select>
+
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-300 block" htmlFor="target-companies-input">
+                    Target Companies (optional)
+                  </label>
+                  <textarea
+                    id="target-companies-input"
+                    data-testid="target-companies-input"
+                    className="w-full min-h-[92px] rounded-md border border-white/10 bg-[#0F0618] px-3 py-2 text-sm text-white placeholder:text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9E47FF]"
+                    placeholder="Example: Google, Microsoft, Amazon\nUse commas or new lines. Maximum 5 companies."
+                    value={targetCompaniesInput}
+                    onChange={(e) => setTargetCompaniesInput(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500">
+                    We will tailor additional company-focused interview questions based on your selected resume.
+                  </p>
+                </div>
+
                 <Button
                   onClick={handleGenerate}
                   data-testid="generate-questions-btn"
@@ -182,6 +238,33 @@ export const InterviewPage = () => {
                     </li>
                   ))}
                 </ol>
+              </div>
+            )}
+
+            {/* Company-specific Questions */}
+            {questions.company_specific && Object.keys(questions.company_specific).length > 0 && (
+              <div className="bg-[#1A0F2E] rounded-2xl border border-white/10 p-8 shadow-sm" data-testid="company-questions-section">
+                <div className="flex items-center gap-3 mb-6">
+                  <Briefcase className="w-6 h-6 text-[#9E47FF]" />
+                  <h2 className="text-2xl font-semibold text-white">Company-Specific Questions</h2>
+                </div>
+                <div className="space-y-6">
+                  {Object.entries(questions.company_specific).map(([company, companyQuestions]) => (
+                    <div key={company} className="rounded-xl border border-white/10 p-5 bg-[#0F0618]">
+                      <h3 className="text-lg font-semibold text-white mb-4">{company}</h3>
+                      <ol className="space-y-3">
+                        {companyQuestions.map((question, index) => (
+                          <li key={`${company}-${index}`} className="flex gap-4" data-testid={`company-${company}-q-${index}`}>
+                            <span className="flex-shrink-0 w-8 h-8 bg-[#9E47FF]/20 text-[#9E47FF] rounded-full flex items-center justify-center font-semibold text-sm">
+                              {index + 1}
+                            </span>
+                            <p className="text-gray-300 pt-1">{question}</p>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

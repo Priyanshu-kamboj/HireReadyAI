@@ -71,8 +71,27 @@ RAZORPAY_KEY_SECRET: str = os.environ.get('RAZORPAY_KEY_SECRET', '')
 razorpay_client = cast(Any, razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)))
 
 # OpenAI client
+def _has_configured_openai_key(api_key: str) -> bool:
+    if not api_key:
+        return False
+
+    key_lower = api_key.lower()
+    placeholder_markers = [
+        "your-openai-api-key-here",
+        "your-key-here",
+        "replace-with",
+        "example",
+        "test-key",
+    ]
+    if any(marker in key_lower for marker in placeholder_markers):
+        return False
+
+    return api_key.startswith("sk-")
+
+
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '').strip()
-openai_client: Optional[AsyncOpenAI] = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+OPENAI_ENABLED = _has_configured_openai_key(OPENAI_API_KEY)
+openai_client: Optional[AsyncOpenAI] = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_ENABLED else None
 
 
 def _mock_resume_analysis(resume_text: str) -> dict:
@@ -157,8 +176,8 @@ def _mock_jd_match(resume_text: str, job_description: str) -> dict:
     }
 
 
-def _mock_interview_questions() -> dict:
-    return {
+def _mock_interview_questions(target_companies: Optional[List[str]] = None) -> dict:
+    result = {
         "technical": [
             "Explain a project where you improved API performance.",
             "How do you design a scalable backend for high traffic?",
@@ -189,6 +208,21 @@ def _mock_interview_questions() -> dict:
         }
     }
 
+    companies = [c.strip() for c in (target_companies or []) if c and c.strip()]
+    if companies:
+        result["target_companies"] = companies
+        result["company_specific"] = {
+            company: [
+                f"What kind of engineering problems do you think {company} is solving in this role?",
+                f"How would your resume projects map to responsibilities at {company}?",
+                f"Describe one project decision you would defend in a {company} interview.",
+                f"Which metrics would you track to measure impact at {company}?"
+            ]
+            for company in companies
+        }
+
+    return result
+
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
@@ -197,12 +231,19 @@ app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, cast(Any, _rate_limit_exceeded_handler))
 
+cors_origins_env = os.environ.get("CORS_ORIGINS", "")
+if cors_origins_env.strip():
+    cors_origins = [origin.strip().rstrip("/") for origin in cors_origins_env.split(",") if origin.strip()]
+else:
+    cors_origins = ["https://hire-ready-ai-lime.vercel.app"]
+
+for dev_origin in ["http://localhost:3000", "http://localhost:5173"]:
+    if dev_origin not in cors_origins:
+        cors_origins.append(dev_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://hire-ready-n7gsz0pob-priyanshu-kambojs-projects.vercel.app",
-    ],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -294,12 +335,15 @@ class JDMatchResponse(BaseModel):
 
 class InterviewQuestionsRequest(BaseModel):
     resume_id: str
+    target_companies: List[str] = Field(default_factory=list)
 
 class InterviewQuestionsResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
     technical: List[str]
     hr: List[str]
     project_based: List[str]
+    company_specific: Dict[str, List[str]] = Field(default_factory=dict)
+    target_companies: List[str] = Field(default_factory=list)
     remaining_credits: int
 
 class AdminStats(BaseModel):
@@ -459,10 +503,9 @@ Provide your response in this exact JSON structure:
         raise HTTPException(status_code=500, detail="AI returned invalid response format")
     except Exception as e:
         error_msg = str(e).lower()
-        # Fall back to mock if OpenAI auth fails or API key is invalid
         if 'api key' in error_msg or '401' in error_msg or 'unauthorized' in error_msg or 'authentication' in error_msg:
-            logging.warning(f"OpenAI authentication failed, using mock response: {str(e)}")
-            return _mock_resume_analysis(resume_text)
+            logging.error(f"OpenAI authentication failed with configured key: {str(e)}")
+            raise HTTPException(status_code=500, detail="OpenAI API key is invalid or unauthorized")
         logging.error(f"AI analysis error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
 
@@ -509,32 +552,44 @@ Provide your response in this exact JSON structure:
         raise HTTPException(status_code=500, detail="AI returned invalid response format")
     except Exception as e:
         error_msg = str(e).lower()
-        # Fall back to mock if OpenAI auth fails or API key is invalid
         if 'api key' in error_msg or '401' in error_msg or 'unauthorized' in error_msg or 'authentication' in error_msg:
-            logging.warning(f"OpenAI authentication failed, using mock response: {str(e)}")
-            return _mock_jd_match(resume_text, job_description)
+            logging.error(f"OpenAI authentication failed with configured key: {str(e)}")
+            raise HTTPException(status_code=500, detail="OpenAI API key is invalid or unauthorized")
         logging.error(f"JD matching error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"JD matching failed: {str(e)}")
 
-async def generate_interview_questions_with_ai(resume_text: str) -> dict:
+async def generate_interview_questions_with_ai(resume_text: str, target_companies: Optional[List[str]] = None) -> dict:
     """Generate interview questions using OpenAI - only for full plan"""
     if openai_client is None:
-        return _mock_interview_questions()
+        return _mock_interview_questions(target_companies)
 
     try:
         # Full plan only - use best model
         model = "gpt-4o"
+
+        companies = [c.strip() for c in (target_companies or []) if c and c.strip()]
+        company_instruction = ""
+        company_json_instruction = ""
+        if companies:
+            company_list = ", ".join(companies)
+            company_instruction = (
+                f"Also tailor company-specific interview questions for these target companies: {company_list}. "
+                "Use known interview focus areas and style patterns of each company where possible."
+            )
+            company_json_instruction = ',\n  "company_specific": {"<company_name>": [<4-6 company-focused questions per company>]}'
         
         prompt = f"""Based on this resume, generate relevant interview questions in JSON format:
 
 Resume:
 {resume_text[:2000]}
 
+{company_instruction}
+
 Provide your response in this exact JSON structure:
 {{
   "technical": [<list of 8-10 technical questions based on skills and experience>],
   "hr": [<list of 5-7 behavioral/HR questions>],
-  "project_based": [<list of 5-7 questions about projects mentioned in resume>]
+    "project_based": [<list of 5-7 questions about projects mentioned in resume>]{company_json_instruction}
 }}"""
         
         response = await openai_client.chat.completions.create(
@@ -555,10 +610,9 @@ Provide your response in this exact JSON structure:
         raise HTTPException(status_code=500, detail="AI returned invalid response format")
     except Exception as e:
         error_msg = str(e).lower()
-        # Fall back to mock if OpenAI auth fails or API key is invalid
         if 'api key' in error_msg or '401' in error_msg or 'unauthorized' in error_msg or 'authentication' in error_msg:
-            logging.warning(f"OpenAI authentication failed, using mock response: {str(e)}")
-            return _mock_interview_questions()
+            logging.error(f"OpenAI authentication failed with configured key: {str(e)}")
+            raise HTTPException(status_code=500, detail="OpenAI API key is invalid or unauthorized")
         logging.error(f"Interview question generation error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Question generation failed: {str(e)}")
 
@@ -829,6 +883,19 @@ async def generate_interview_questions(
     request_data: InterviewQuestionsRequest,
     current_user: User = Depends(get_current_user)
 ):
+    # Normalize and validate requested companies
+    seen: set[str] = set()
+    target_companies: List[str] = []
+    for company in request_data.target_companies:
+        normalized = company.strip()
+        key = normalized.lower()
+        if normalized and key not in seen:
+            seen.add(key)
+            target_companies.append(normalized)
+
+    if len(target_companies) > 5:
+        raise HTTPException(status_code=400, detail="You can target up to 5 companies at a time")
+
     # Get resume
     response = supabase.table('resumes').select('*').eq('id', request_data.resume_id).eq('user_id', current_user.id).execute()
     if not response.data or len(response.data) == 0:
@@ -848,7 +915,7 @@ async def generate_interview_questions(
     if active_plan != "full":
         raise HTTPException(
             status_code=403,
-            detail="Interview questions generation requires Full plan (₹79)"
+            detail=f"Interview questions generation requires Full plan (₹79). Current active plan: {active_plan}."
         )
     
     # Check if user already has interview questions for this resume (free on subsequent generations)
@@ -862,20 +929,26 @@ async def generate_interview_questions(
             detail="No credits available. Please purchase credits to continue."
         )
     
-    # If questions were already generated, return them without deducting credit
-    if not is_first_generation:
+    # For generic generation (no companies), return cached questions without deducting credit.
+    # For company-targeted generation, create fresh company-specific questions.
+    if not is_first_generation and not target_companies:
         cached_q = cast(Dict[str, Any], existing_questions.data[0])
         questions = {
             "technical": cached_q.get("technical", []),
             "hr": cached_q.get("hr", []),
-            "project_based": cached_q.get("project_based", [])
+            "project_based": cached_q.get("project_based", []),
+            "company_specific": {},
+            "target_companies": []
         }
         questions["remaining_credits"] = current_user.credits
         logging.info(f"Interview questions for resume {request_data.resume_id} - already generated before, no credit deducted")
         return InterviewQuestionsResponse(**questions)
     
     # Generate questions with AI (first time)
-    questions = await generate_interview_questions_with_ai(str(resume.get("resume_text", "")))
+    questions = await generate_interview_questions_with_ai(
+        str(resume.get("resume_text", "")),
+        target_companies=target_companies
+    )
     
     # Save interview questions to database
     questions_doc = {
@@ -886,35 +959,42 @@ async def generate_interview_questions(
         "project_based": questions.get("project_based", [])
     }
     
-    try:
-        save_response = supabase.table('interview_questions').insert(questions_doc).execute()
-        if not save_response.data:
-            logging.error(f"Failed to save interview questions for resume {request_data.resume_id}")
-    except Exception as e:
-        logging.error(f"Error saving interview questions: {str(e)}")
+    if is_first_generation:
+        try:
+            save_response = supabase.table('interview_questions').insert(questions_doc).execute()
+            if not save_response.data:
+                logging.error(f"Failed to save interview questions for resume {request_data.resume_id}")
+        except Exception as e:
+            logging.error(f"Error saving interview questions: {str(e)}")
     
-    # Deduct 1 credit only on first generation
-    current_credits = current_user.credits - 1
-    current_usage = current_user.usage_count + 1
-    
-    # Update credits in database (CRITICAL: must verify success)
-    try:
-        update_response = supabase.table('users').update({
-            "credits": current_credits,
-            "usage_count": current_usage
-        }).eq('id', current_user.id).execute()
-        
-        if not update_response.data:
-            logging.error(f"Database update failed for user {current_user.id}. Response: {update_response}")
-            raise HTTPException(status_code=500, detail="Failed to deduct credits")
-        
-        logging.info(f"Credits deducted for user {current_user.id}. First interview question generation. New balance: {current_credits}")
-    except Exception as e:
-        logging.error(f"Error deducting credits: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to deduct credits: {str(e)}")
+    if is_first_generation:
+        # Deduct 1 credit only on first generation
+        current_credits = current_user.credits - 1
+        current_usage = current_user.usage_count + 1
+
+        # Update credits in database (CRITICAL: must verify success)
+        try:
+            update_response = supabase.table('users').update({
+                "credits": current_credits,
+                "usage_count": current_usage
+            }).eq('id', current_user.id).execute()
+
+            if not update_response.data:
+                logging.error(f"Database update failed for user {current_user.id}. Response: {update_response}")
+                raise HTTPException(status_code=500, detail="Failed to deduct credits")
+
+            logging.info(f"Credits deducted for user {current_user.id}. First interview question generation. New balance: {current_credits}")
+        except Exception as e:
+            logging.error(f"Error deducting credits: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to deduct credits: {str(e)}")
+    else:
+        current_credits = current_user.credits
     
     # Add remaining credits to response
     if isinstance(questions, dict):
+        if not isinstance(questions.get("company_specific"), dict):
+            questions["company_specific"] = {}
+        questions["target_companies"] = target_companies
         questions["remaining_credits"] = current_credits
     return InterviewQuestionsResponse(**questions)
 
@@ -1225,14 +1305,6 @@ async def get_api_usage(request: Request):
 
 # Include the router in the main app
 app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Configure logging
 logging.basicConfig(
