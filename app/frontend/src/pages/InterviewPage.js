@@ -19,6 +19,89 @@ export const InterviewPage = () => {
   const [loading, setLoading] = useState(false);
   const [questions, setQuestions] = useState(null);
 
+  const buildMockInterviewResponse = (targetCompanies = []) => {
+    const getCompanyMockQuestions = (company) => {
+      const normalized = company.trim().toLowerCase();
+
+      if (normalized.includes('google')) {
+        return [
+          'How would you design a globally scalable URL shortener service?',
+          'How do you optimize p95 latency for a high-traffic backend endpoint?',
+          'Describe an algorithmic trade-off you made in production and why.',
+          'How did you use data to validate one important engineering decision?'
+        ];
+      }
+
+      if (normalized.includes('microsoft')) {
+        return [
+          'How would you design a reliable collaboration feature for large enterprise usage?',
+          'Describe a cross-team project where you had to align multiple stakeholders.',
+          'How would you improve monitoring and observability for a cloud service?',
+          'Share an example where backward compatibility changed your implementation.'
+        ];
+      }
+
+      if (normalized.includes('amazon')) {
+        return [
+          'Tell me about a time you showed ownership during a production incident.',
+          'How would you design an idempotent order-processing API?',
+          'How do you balance fast shipping versus long-term maintainability?',
+          'Which operational metrics would you track from day one and why?'
+        ];
+      }
+
+      if (normalized.includes('meta') || normalized.includes('facebook')) {
+        return [
+          'How would you design and evaluate a feed ranking experiment?',
+          'Describe a backend optimization that improved real user experience.',
+          'How do you handle data freshness versus consistency trade-offs?',
+          'Tell me about a technical disagreement and how you resolved it.'
+        ];
+      }
+
+      return [
+        `Why do you want to join ${company} for this role?`,
+        `How does your resume experience align with the work culture at ${company}?`,
+        `Describe one project from your resume that would be most relevant to ${company}.`,
+        `Which engineering metrics would you improve first if you joined ${company}?`
+      ];
+    };
+
+    const companySpecific = targetCompanies.reduce((acc, company) => {
+      acc[company] = getCompanyMockQuestions(company);
+      return acc;
+    }, {});
+
+    return {
+      technical: [
+        'Explain one backend architecture decision you made and why it was effective.',
+        'How do you optimize API latency and database performance in production?',
+        'How do you design authentication and authorization for a SaaS application?',
+        'How do you test critical flows before release?',
+        'Describe a scaling challenge you solved and what changed after the fix.'
+      ],
+      hr: [
+        'Tell me about a time you handled conflicting deadlines.',
+        'Describe a mistake you made and what you learned from it.',
+        'How do you handle feedback during code reviews?',
+        'How do you prioritize quality versus speed under pressure?'
+      ],
+      project_based: [
+        'Walk through the architecture of your strongest project.',
+        'What trade-offs did you make and why?',
+        'How did you measure project success?',
+        'If you rebuilt it today, what would you change first?'
+      ],
+      company_specific: companySpecific,
+      target_companies: targetCompanies,
+      remaining_credits: 0,
+      meta: {
+        source: 'frontend-mock',
+        reason: 'Interview API unavailable'
+      }
+    };
+  };
+
   const parseCompanies = (rawValue) => {
     const splitCompanies = rawValue
       .split(/[\n,]/)
@@ -80,6 +163,16 @@ export const InterviewPage = () => {
       await fetchUser();
     } catch (error) {
       const message = error.response?.data?.detail || 'Generation failed';
+      const statusCode = error.response?.status;
+      const isApiUnavailable = !error.response || [500, 502, 503, 504].includes(statusCode);
+
+      if (isApiUnavailable) {
+        const fallback = buildMockInterviewResponse(targetCompanies);
+        setQuestions(fallback);
+        toast.warning('Interview API is currently unavailable. Showing mock questions temporarily.');
+        return;
+      }
+
       toast.error(message);
       if (message.toLowerCase().includes('full plan')) {
         setTimeout(() => navigate('/pricing'), 1500);

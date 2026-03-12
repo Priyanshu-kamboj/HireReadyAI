@@ -177,6 +177,56 @@ def _mock_jd_match(resume_text: str, job_description: str) -> dict:
 
 
 def _mock_interview_questions(target_companies: Optional[List[str]] = None) -> dict:
+    def get_company_mock_questions(company: str) -> List[str]:
+        normalized = company.strip().lower()
+
+        if "google" in normalized:
+            return [
+                "How would you design a globally scalable URL shortener like goo.gl?",
+                "Explain a time you used data to drive a product or engineering decision.",
+                "How would you reduce p95 latency for a high-traffic search API?",
+                "Describe one complex algorithmic trade-off you made in a production system.",
+            ]
+
+        if "microsoft" in normalized:
+            return [
+                "How would you design a reliable collaboration feature similar to Teams presence sync?",
+                "Describe a situation where you worked cross-functionally to unblock delivery.",
+                "How would you improve observability for a cloud service deployed on Azure?",
+                "Tell me about a project where backward compatibility influenced your architecture.",
+            ]
+
+        if "amazon" in normalized:
+            return [
+                "Tell me about a time you took ownership of a production issue end-to-end.",
+                "How would you design an idempotent order-processing API at scale?",
+                "Describe a decision where you had to balance speed of delivery with long-term quality.",
+                "What metrics would you track to ensure operational excellence for a new service?",
+            ]
+
+        if "meta" in normalized or "facebook" in normalized:
+            return [
+                "How would you design a feed ranking experiment and evaluate its impact?",
+                "Describe a backend optimization that improved user experience at scale.",
+                "How would you handle consistency and freshness trade-offs in social graph queries?",
+                "Tell me about a technical disagreement and how you resolved it with your team.",
+            ]
+
+        if "netflix" in normalized:
+            return [
+                "How would you design a resilient recommendation microservice for peak traffic?",
+                "Describe how you would debug intermittent failures in an event-driven pipeline.",
+                "What architecture choices would you make for high availability across regions?",
+                "Tell me about a high-impact engineering decision you made under ambiguity.",
+            ]
+
+        return [
+            f"Why do you want to work at {company}, and how does your profile fit this role?",
+            f"Which project from your resume is most relevant to {company}, and why?",
+            f"How would you improve one core engineering metric if you joined {company}?",
+            f"Describe a challenging problem you solved that reflects {company}'s interview style.",
+        ]
+
     result = {
         "technical": [
             "Explain a project where you improved API performance.",
@@ -212,12 +262,7 @@ def _mock_interview_questions(target_companies: Optional[List[str]] = None) -> d
     if companies:
         result["target_companies"] = companies
         result["company_specific"] = {
-            company: [
-                f"What kind of engineering problems do you think {company} is solving in this role?",
-                f"How would your resume projects map to responsibilities at {company}?",
-                f"Describe one project decision you would defend in a {company} interview.",
-                f"Which metrics would you track to measure impact at {company}?"
-            ]
+            company: get_company_mock_questions(company)
             for company in companies
         }
 
