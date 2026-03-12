@@ -259,12 +259,14 @@ def _mock_interview_questions(target_companies: Optional[List[str]] = None) -> d
     }
 
     companies = [c.strip() for c in (target_companies or []) if c and c.strip()]
-    if companies:
-        result["target_companies"] = companies
-        result["company_specific"] = {
-            company: get_company_mock_questions(company)
-            for company in companies
-        }
+    if not companies:
+        companies = ["Google", "Microsoft", "Amazon", "Meta", "Netflix"]
+
+    result["target_companies"] = companies
+    result["company_specific"] = {
+        company: get_company_mock_questions(company)
+        for company in companies
+    }
 
     return result
 

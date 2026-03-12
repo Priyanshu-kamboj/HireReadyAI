@@ -59,6 +59,15 @@ export const InterviewPage = () => {
         ];
       }
 
+      if (normalized.includes('netflix')) {
+        return [
+          'How would you design a resilient recommendation service for peak traffic?',
+          'How would you debug intermittent failures in an event-driven pipeline?',
+          'What architecture decisions support high availability across regions?',
+          'Tell me about a high-impact engineering decision you made under ambiguity.'
+        ];
+      }
+
       return [
         `Why do you want to join ${company} for this role?`,
         `How does your resume experience align with the work culture at ${company}?`,
@@ -67,7 +76,11 @@ export const InterviewPage = () => {
       ];
     };
 
-    const companySpecific = targetCompanies.reduce((acc, company) => {
+    const effectiveCompanies = targetCompanies.length > 0
+      ? targetCompanies
+      : ['Google', 'Microsoft', 'Amazon', 'Meta', 'Netflix'];
+
+    const companySpecific = effectiveCompanies.reduce((acc, company) => {
       acc[company] = getCompanyMockQuestions(company);
       return acc;
     }, {});
@@ -93,7 +106,7 @@ export const InterviewPage = () => {
         'If you rebuilt it today, what would you change first?'
       ],
       company_specific: companySpecific,
-      target_companies: targetCompanies,
+      target_companies: effectiveCompanies,
       remaining_credits: 0,
       meta: {
         source: 'frontend-mock',
