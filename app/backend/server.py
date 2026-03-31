@@ -284,6 +284,14 @@ if cors_origins_env.strip():
 else:
     cors_origins = ["https://hire-ready-ai-lime.vercel.app"]
 
+# Allow dynamic preview deployments (e.g., Vercel previews) via regex.
+# Example: CORS_ORIGIN_REGEX=^https://hire-ready-.*\\.vercel\\.app$
+cors_origin_regex = (
+    os.environ.get("CORS_ORIGIN_REGEX")
+    or os.environ.get("CORS_ORIGINS_REGEX")
+    or r"^https://hire-ready-.*\.vercel\.app$"
+)
+
 for dev_origin in ["http://localhost:3000", "http://localhost:5173"]:
     if dev_origin not in cors_origins:
         cors_origins.append(dev_origin)
@@ -291,6 +299,7 @@ for dev_origin in ["http://localhost:3000", "http://localhost:5173"]:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

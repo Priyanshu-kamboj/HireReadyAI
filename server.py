@@ -777,10 +777,19 @@ else:
         "https://hire-ready-ai-lime.vercel.app"
     ]
 
+# Allow dynamic preview deployments (e.g., Vercel previews) via regex.
+# Example: CORS_ORIGIN_REGEX=^https://hire-ready-.*\\.vercel\\.app$
+cors_origin_regex = (
+    os.getenv("CORS_ORIGIN_REGEX")
+    or os.getenv("CORS_ORIGINS_REGEX")
+    or r"^https://hire-ready-.*\.vercel\.app$"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=cors_origins,
+    allow_origin_regex=cors_origin_regex,
     allow_methods=["*"],
     allow_headers=["*"],
 )
